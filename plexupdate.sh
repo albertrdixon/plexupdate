@@ -104,7 +104,7 @@ trap cleanup EXIT 2 9 15
 # commit		Sign in
 
 # If user wants, we skip authentication, but only if previous auth exists
-if [[ "${KEEP}" != "yes" -o ! -f /tmp/kaka ]] && [[ "${PUBLIC}" == "no" ]]; then
+if [[ ! -f /tmp/kaka ]] && [[ "${PUBLIC}" == "no" ]]; then
 	echo -n "Authenticating..."
 	# Clean old session
 	rm /tmp/kaka 2>/dev/null
