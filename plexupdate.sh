@@ -44,79 +44,21 @@
 # in your home directory with these two (avoids changing this)
 # DOWNLOADDIR is the full directory path you would like the download to go, without trailing slash.
 #
-EMAIL=
-PASS=
-DOWNLOADDIR="."
-
-#################################################################
-# Don't change anything below this point
-#
-
-# Defaults
-# (aka "Advanced" settings, can be overriden with config file)
-RELEASE="64-bit"
-KEEP=no
-FORCE=no
-PUBLIC=no
-AUTOINSTALL=no
+: ${PKGEXT:='.deb'}
 
 # Sanity, make sure wget is in our path...
-wget >/dev/null 2>/dev/null
-if [ $? -eq 127 ]; then
+if wget >/dev/null 2>/dev/null; then
 	echo "Error: This script requires wget in the path. It could also signify that you don't have the tool installed."
 	exit 1
 fi
 
-# Load settings from config file if it exists
-if [ -f ~/.plexupdate ]; then
-	source ~/.plexupdate
-fi
-
-# Current pages we need - Do not change unless Plex.tv changea again
-URL_LOGIN=https://plex.tv/users/sign_in
-URL_DOWNLOAD=https://plex.tv/downloads?channel=plexpass
-URL_DOWNLOAD_PUBLIC=https://plex.tv/downloads
-
-# Parse commandline
-set -- $(getopt fhko: -- "$@")
-while true;
-do
-	case "$1" in
-	(-h) echo -e "Usage: $(basename $0) [-afhkop]\n\na = Auto install if download was successful (requires root)\nf = Force download even if it exists (WILL NOT OVERWRITE)\nh = This help\nk = Reuse last authentication\no = 32-bit version (default 64 bit)\np = Public Plex Media Server version"; exit 0;;
-	(-a) AUTOINSTALL=yes;;
-	(-f) FORCE=yes;;
-	(-k) KEEP=yes;;
-	(-o) RELEASE="32-bit";;
-	(-p) PUBLIC=yes;;
-	(--) ;;
-	(-*) echo "Error: unrecognized option $1" 1>&2; exit 1;;
-	(*)  break;;
-	esac
-	shift
-done
-
 # Sanity check
-if [ "${EMAIL}" == "" -o "${PASS}" == "" ] && [ "${PUBLIC}" == "no" ]; then
+if [ -z "${EMAIL}" -o -z "${PASS}" ] && [[ "${PUBLIC}" == "no" ]]; then
 	echo "Error: Need username & password to download PlexPass version. Otherwise run with -p to download public version."
 	exit 1
 fi
 
-if [ "${AUTOINSTALL}" == "yes" ]; then
-	id | grep 'uid=0(' 2>&1 >/dev/null
-	if [ $? -ne 0 ]; then
-		echo "Error: You need to be root to use autoinstall option."
-		exit 1
-	fi
-fi
-
-# Detect if we're running on redhat instead of ubuntu
-REDHAT=no;
-PKGEXT='.deb'
-
-if [ -f /etc/redhat-release ]; then
-	REDHAT=yes;
-	PKGEXT='.rpm'
-fi
+[ -d "/etc/plexupdate" ] || mkdir /etc/plexupdate
 
 # Useful functions
 rawurlencode() {
@@ -144,10 +86,12 @@ keypair() {
 
 # Setup an exit handler so we cleanup
 function cleanup {
-	rm /tmp/kaka 2>/dev/null >/dev/null
-	rm /tmp/postdata 2>/dev/null >/dev/null
+	rm -f /tmp/kaka >/dev/null 2>&1
+	rm -f /tmp/postdata >/dev/null 2>&1
+	rm -f "$DOWNLOADDIR/*" >/dev/null 2>&1
 }
-trap cleanup EXIT
+# trap cleanup EXIT
+trap cleanup EXIT 2 9 15 
 
 # Fields we need to submit for login to work
 #
@@ -160,14 +104,14 @@ trap cleanup EXIT
 # commit		Sign in
 
 # If user wants, we skip authentication, but only if previous auth exists
-if [ "${KEEP}" != "yes" -o ! -f /tmp/kaka ] && [ "${PUBLIC}" == "no" ]; then
+if [[ "${KEEP}" != "yes" -o ! -f /tmp/kaka ]] && [[ "${PUBLIC}" == "no" ]]; then
 	echo -n "Authenticating..."
 	# Clean old session
 	rm /tmp/kaka 2>/dev/null
 
 	# Get initial seed we need to authenticate
 	SEED=$(wget --save-cookies /tmp/kaka --keep-session-cookies ${URL_LOGIN} -O - 2>/dev/null | grep 'name="authenticity_token"' | sed 's/.*value=.\([^"]*\).*/\1/')
-	if [ $? -ne 0 -o "${SEED}" == "" ]; then
+	if [[ $? -ne 0 -o "${SEED}" == "" ]]; then
 		echo "Error: Unable to obtain authentication token, page changed?"
 		exit 1
 	fi
@@ -206,7 +150,7 @@ echo -n "Finding download URL for ${RELEASE}..."
 DOWNLOAD=$(wget --load-cookies /tmp/kaka --save-cookies /tmp/kaka --keep-session-cookies "${URL_DOWNLOAD}" -O - 2>/dev/null | grep "${PKGEXT}" | grep -m 1 "${RELEASE}" | sed "s/.*href=\"\([^\"]*\\${PKGEXT}\)\"[^>]*>${RELEASE}.*/\1/" )
 echo -e "OK"
 
-if [ "${DOWNLOAD}" == "" ]; then
+if [[ "${DOWNLOAD}" == "" ]]; then
 	echo "Sorry, page layout must have changed, I'm unable to retrieve the URL needed for download"
 	exit 3
 fi
@@ -217,9 +161,11 @@ if [ $? -ne 0 ]; then
 	exit 3
 fi
 
-if [ -f "${DOWNLOADDIR}/${FILENAME}" -a "${FORCE}" != "yes" ]; then
-	echo "File already exists, won't download."
-	exit 2
+if [[ "$FILENAME" == "$(cat /etc/plexupdate/version 2>/dev/null)" ]] && [[ "$FORCE" != "yes" ]]; then
+	echo "$FILENAME is current installed version. Bailing."
+	exit 0
+else
+	echo "$FILENAME" > /etc/plexupdate/version
 fi
 
 echo -ne "Downloading release \"${FILENAME}\"..."
@@ -231,12 +177,8 @@ if [ ${CODE} -ne 0 ]; then
 fi
 echo "OK"
 
-if [ "${AUTOINSTALL}" == "yes" ]; then
-	if [ "${REDHAT}" == "yes" ]; then
-		rpm -i "${DOWNLOADDIR}/${FILENAME}"
-	else
-		dpkg -i "${DOWNLOADDIR}/${FILENAME}"
-	fi
+if [[ "${AUTOINSTALL}" == "yes" ]]; then
+	dpkg -i "${DOWNLOADDIR}/${FILENAME}"
 fi
 
 exit 0
